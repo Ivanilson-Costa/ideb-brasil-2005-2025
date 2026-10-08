@@ -1,0 +1,1892 @@
+---
+title: "IDEB 2005–2025 — Comparações por Região e Unidade da Federação"
+author: "Ivanilson Costa"
+date: "`r format(Sys.Date(), '%d/%m/%Y')`"
+output:
+  pdf_document:
+    toc: true
+  word_document:
+    toc: true
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+    df_print: paged
+    self_contained: false
+params:
+  arquivo:
+    value: C:/Users/901742/Downloads/divulgacao_regioes_ufs_ideb_2025.xlsx
+    label: Arquivo IDEB
+    input: text
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 15,
+  fig.height = 9,
+  dpi = 300,
+  dev = "png",
+  fig.path = "graficos_ideb/"
+)
+
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(ggrepel)
+library(scales)
+library(knitr)
+library(geobr)
+library(sf)
+library(patchwork)
+
+theme_set(
+  theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(face = "bold"),
+      plot.subtitle = element_text(color = "grey25"),
+      strip.text = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom"
+    )
+)
+
+# Botão automático de download abaixo de cada gráfico na saída HTML
+hook_plot_original <- knitr::knit_hooks$get("plot")
+
+knitr::knit_hooks$set(
+  plot = function(x, options) {
+
+    grafico_renderizado <- hook_plot_original(x, options)
+
+    if (!knitr::is_html_output()) {
+      return(grafico_renderizado)
+    }
+
+    caminho_download <- gsub("\\\\", "/", x)
+    nome_download <- basename(caminho_download)
+
+    botao <- sprintf(
+      paste0(
+        '<div class="grafico-download">',
+        '<a class="btn-download" href="%s" download="%s">',
+        '&#8595;&nbsp;&nbsp;Baixar gráfico em PNG',
+        '</a>',
+        '</div>'
+      ),
+      caminho_download,
+      nome_download
+    )
+
+    paste0(
+      grafico_renderizado,
+      "\n",
+      botao,
+      "\n"
+    )
+  }
+)
+```
+
+
+<style>
+.grafico-download {
+  margin-top: 8px;
+  margin-bottom: 28px;
+  text-align: right;
+}
+
+.btn-download {
+  display: inline-block;
+  background: #2F5D7C;
+  color: #FFFFFF !important;
+  text-decoration: none !important;
+  border: 1px solid #244A64;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.btn-download:hover {
+  background: #244A64;
+  color: #FFFFFF !important;
+  transform: translateY(-1px);
+}
+
+.btn-download:focus {
+  outline: 2px solid #7FA5BF;
+  outline-offset: 2px;
+}
+</style>
+
+> **Download dos gráficos:** na versão HTML, cada gráfico possui um botão **“Baixar gráfico em PNG”** logo abaixo da figura. Os arquivos são gerados em alta resolução (300 dpi) na pasta `graficos_ideb`. Para manter os botões funcionando, preserve essa pasta junto ao arquivo HTML.
+
+
+# Objetivo
+
+**Autor e elaboração dos gráficos: Ivanilson Costa.** O relatório apresenta apenas os resultados e elementos necessários à interpretação; o código de processamento permanece oculto.
+
+Este relatório apresenta a evolução do **IDEB** entre **2005 e 2025**, comparando:
+
+- **Regiões brasileiras**;
+- **Unidades da Federação (UFs)**.
+
+A análise é realizada separadamente para:
+
+- **Anos iniciais** do ensino fundamental;
+- **Anos finais** do ensino fundamental;
+- **Ensino médio**.
+
+As comparações são feitas pelas dependências administrativas existentes na base:
+
+- **Total**;
+- **Pública**;
+- **Privada**;
+- **Estadual**.
+
+## Observações metodológicas centrais
+
+1. A planilha analisada **não contém a rede Municipal** no nível de regiões e UFs.
+2. Para **ensino médio**, a base não apresenta a categoria agregada **Pública**.
+3. As metas oficiais do primeiro ciclo do Ideb foram estabelecidas até **2021**.
+4. Neste relatório, para manter a referência visual até **2023 e 2025**, a **meta de 2021 é estendida como meta de referência do ciclo**, sem tratá-la como nova meta oficial pactuada.
+
+<!-- 2. Importação e tratamento dos dados -->
+
+```{r importar-dados, include=FALSE}
+arquivo <- params$arquivo
+
+abas <- c(
+  "UF e Regiões (AI)" = "Anos iniciais",
+  "UF e Regiões (AF)" = "Anos finais",
+  "UF e Regiões (EM)" = "Ensino médio"
+)
+
+ler_ideb <- function(aba, etapa) {
+
+  dados <- read_excel(
+    arquivo,
+    sheet = aba,
+    skip = 9
+  ) %>%
+    clean_names() %>%
+    rename(
+      local = x1,
+      rede_original = x2
+    ) %>%
+    mutate(
+      rede = rede_original %>%
+        str_remove_all("\\s*\\([^)]*\\)") %>%
+        str_squish(),
+      etapa = etapa
+    )
+
+  observado <- dados %>%
+    select(
+      local,
+      rede_original,
+      rede,
+      etapa,
+      starts_with("vl_observado_")
+    ) %>%
+    mutate(
+      across(starts_with("vl_observado_"), as.character)
+    ) %>%
+    pivot_longer(
+      cols = starts_with("vl_observado_"),
+      names_to = "ano",
+      values_to = "ideb"
+    ) %>%
+    mutate(
+      ano = parse_number(ano),
+      ideb = parse_number(ideb, na = c("", "-", "NA"))
+    )
+
+  meta <- dados %>%
+    select(
+      local,
+      rede_original,
+      rede,
+      etapa,
+      starts_with("vl_projecao_")
+    ) %>%
+    mutate(
+      across(starts_with("vl_projecao_"), as.character)
+    ) %>%
+    pivot_longer(
+      cols = starts_with("vl_projecao_"),
+      names_to = "ano",
+      values_to = "meta"
+    ) %>%
+    mutate(
+      ano = parse_number(ano),
+      meta = parse_number(meta, na = c("", "-", "NA"))
+    )
+
+  base <- observado %>%
+    left_join(
+      meta,
+      by = c("local", "rede_original", "rede", "etapa", "ano")
+    )
+
+  metas_2021 <- base %>%
+    filter(ano == 2021) %>%
+    select(local, rede, etapa, meta_2021 = meta)
+
+  base %>%
+    left_join(
+      metas_2021,
+      by = c("local", "rede", "etapa")
+    ) %>%
+    mutate(
+      meta_referencia = case_when(
+        ano <= 2021 ~ meta,
+        ano > 2021 ~ meta_2021,
+        TRUE ~ NA_real_
+      )
+    )
+}
+
+ideb <- imap_dfr(abas, ~ ler_ideb(.y, .x))
+```
+
+<!-- 3. Cadastro territorial -->
+
+```{r cadastro-territorial, include=FALSE}
+regioes <- c(
+  "Norte",
+  "Nordeste",
+  "Sudeste",
+  "Sul",
+  "Centro-Oeste"
+)
+
+ufs_regioes <- tribble(
+  ~local, ~regiao, ~uf,
+
+  "Rondônia", "Norte", "RO",
+  "Acre", "Norte", "AC",
+  "Amazonas", "Norte", "AM",
+  "Roraima", "Norte", "RR",
+  "Pará", "Norte", "PA",
+  "Amapá", "Norte", "AP",
+  "Tocantins", "Norte", "TO",
+
+  "Maranhão", "Nordeste", "MA",
+  "Piauí", "Nordeste", "PI",
+  "Ceará", "Nordeste", "CE",
+  "R. G. do Norte", "Nordeste", "RN",
+  "Paraíba", "Nordeste", "PB",
+  "Pernambuco", "Nordeste", "PE",
+  "Alagoas", "Nordeste", "AL",
+  "Sergipe", "Nordeste", "SE",
+  "Bahia", "Nordeste", "BA",
+
+  "Minas Gerais", "Sudeste", "MG",
+  "Espírito Santo", "Sudeste", "ES",
+  "Rio de Janeiro", "Sudeste", "RJ",
+  "São Paulo", "Sudeste", "SP",
+
+  "Paraná", "Sul", "PR",
+  "Santa Catarina", "Sul", "SC",
+  "R. G. do Sul", "Sul", "RS",
+
+  "M. G. do Sul", "Centro-Oeste", "MS",
+  "Mato Grosso", "Centro-Oeste", "MT",
+  "Goiás", "Centro-Oeste", "GO",
+  "Distrito Federal", "Centro-Oeste", "DF"
+)
+
+ideb_regioes <- ideb %>%
+  filter(local %in% regioes) %>%
+  mutate(regiao = local)
+
+ideb_ufs <- ideb %>%
+  filter(!local %in% regioes) %>%
+  left_join(ufs_regioes, by = "local")
+```
+
+<!-- 4. Aparência gráfica -->
+
+```{r cores, include=FALSE}
+cores_regioes <- c(
+  "Norte" = "#7B3F61",
+  "Nordeste" = "#B35C44",
+  "Centro-Oeste" = "#8A7A3F",
+  "Sudeste" = "#3F6F8A",
+  "Sul" = "#4F6B4F"
+)
+
+cores_redes <- c(
+  "Total" = "#2F5D7C",
+  "Pública" = "#5A7D5A",
+  "Privada" = "#A65353",
+  "Estadual" = "#8A6A3E"
+)
+
+cores_ufs_base <- c(
+  "#1B4F72", # azul escuro
+  "#B03A2E", # vermelho
+  "#117864", # verde
+  "#7D3C98", # roxo
+  "#B9770E", # ocre
+  "#2E86C1", # azul claro
+  "#566573", # cinza azulado
+  "#AF601A", # marrom
+  "#C0392B"  # vermelho escuro
+)
+
+pal_ufs <- function(n) {
+  rep(cores_ufs_base, length.out = n)
+}
+
+escala_fill_ideb <- scale_fill_gradient2(
+  low = "#8B3A3A",
+  mid = "#F2F2F2",
+  high = "#264E73",
+  midpoint = 5,
+  limits = c(2, 8),
+  oob = squish
+)
+
+escala_fill_variacao <- scale_fill_gradient2(
+  low = "#8B3A3A",
+  mid = "#F2F2F2",
+  high = "#264E73",
+  midpoint = 0
+)
+```
+
+<!-- 5. Tabelas de cobertura -->
+
+<!-- 5.1 Redes disponíveis -->
+
+```{r cobertura-redes, include=FALSE}
+ideb %>%
+  distinct(etapa, rede) %>%
+  arrange(etapa, rede) %>%
+  kable(caption = "Redes disponíveis na base, por etapa")
+```
+
+<!-- 5.2 Cobertura de observações -->
+
+```{r cobertura-observacoes, include=FALSE}
+ideb %>%
+  group_by(etapa, rede) %>%
+  summarise(
+    n_locais = n_distinct(local[!is.na(ideb)]),
+    n_observacoes = sum(!is.na(ideb)),
+    primeiro_ano = min(ano[!is.na(ideb)], na.rm = TRUE),
+    ultimo_ano = max(ano[!is.na(ideb)], na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  kable(caption = "Cobertura dos resultados observados")
+```
+
+<!-- 6. Funções auxiliares -->
+
+```{r funcoes, include=FALSE}
+calcular_variacao <- function(dados, grupos) {
+  dados %>%
+    filter(!is.na(ideb)) %>%
+    group_by(across(all_of(grupos))) %>%
+    arrange(ano, .by_group = TRUE) %>%
+    summarise(
+      ano_inicial = first(ano),
+      ideb_inicial = first(ideb),
+      ano_final = last(ano),
+      ideb_final = last(ideb),
+      variacao = ideb_final - ideb_inicial,
+      variacao_pct = (ideb_final / ideb_inicial - 1) * 100,
+      .groups = "drop"
+    )
+}
+
+rotulo_final_variacao <- function(dados, grupos_join, prefixo = NULL) {
+  var <- calcular_variacao(dados, grupos_join)
+
+  dados %>%
+    group_by(across(all_of(grupos_join))) %>%
+    filter(ano == max(ano)) %>%
+    ungroup() %>%
+    left_join(var, by = grupos_join) %>%
+    mutate(
+      rotulo = if (is.null(prefixo)) {
+        sprintf("%.1f | %+.1f", ideb, variacao)
+      } else {
+        sprintf("%s %.1f | %+.1f", .data[[prefixo]], ideb, variacao)
+      }
+    )
+}
+
+grafico_series_regioes <- function(etapa_i, rede_i) {
+
+  dados <- ideb_regioes %>%
+    filter(
+      etapa == etapa_i,
+      rede == rede_i,
+      !is.na(ideb)
+    )
+
+  if (nrow(dados) == 0) return(NULL)
+
+  finais <- rotulo_final_variacao(
+    dados,
+    c("local"),
+    prefixo = NULL
+  ) %>%
+    mutate(rotulo = sprintf("%s  %s", local, rotulo))
+
+  ggplot(
+    dados,
+    aes(x = ano, y = ideb, color = local, group = local)
+  ) +
+    geom_line(linewidth = 1.15) +
+    geom_point(size = 2.1) +
+    geom_line(
+      aes(y = meta_referencia),
+      linetype = "dashed",
+      linewidth = 0.7,
+      alpha = 0.55,
+      na.rm = TRUE
+    ) +
+    ggrepel::geom_text_repel(
+      data = finais,
+      aes(label = rotulo),
+      direction = "y",
+      hjust = 0,
+      nudge_x = 0.35,
+      size = 3.1,
+      fontface = "bold",
+      max.overlaps = Inf,
+      min.segment.length = 0,
+      show.legend = FALSE
+    ) +
+    scale_color_manual(values = cores_regioes) +
+    scale_x_continuous(
+      breaks = seq(2005, 2025, 2),
+      limits = c(2005, 2031)
+    ) +
+    scale_y_continuous(
+      limits = c(2, 8),
+      breaks = seq(2, 8, 0.5)
+    ) +
+    labs(
+      title = paste0("Evolução do IDEB por região — ", etapa_i),
+      subtitle = paste0(
+        "Rede: ", rede_i,
+        " | linha tracejada = meta de referência do ciclo | rótulo final: IDEB | variação"
+      ),
+      x = NULL,
+      y = "IDEB",
+      color = "Região",
+      caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+    )
+}
+
+grafico_series_ufs_regiao <- function(etapa_i, rede_i, regiao_i) {
+
+  dados <- ideb_ufs %>%
+    filter(
+      etapa == etapa_i,
+      rede == rede_i,
+      regiao == regiao_i,
+      !is.na(ideb)
+    )
+
+  if (nrow(dados) == 0) return(NULL)
+
+  estados <- sort(unique(dados$local))
+  cores_ufs <- setNames(
+    pal_ufs(length(estados)),
+    estados
+  )
+
+  finais <- rotulo_final_variacao(
+    dados,
+    c("local", "uf", "regiao"),
+    prefixo = "uf"
+  )
+
+  ggplot(
+    dados,
+    aes(
+      x = ano,
+      y = ideb,
+      color = local,
+      group = local
+    )
+  ) +
+    geom_line(linewidth = 1.15) +
+    geom_point(size = 2.1) +
+    geom_line(
+      aes(y = meta_referencia),
+      linetype = "dashed",
+      linewidth = 0.55,
+      alpha = 0.35,
+      na.rm = TRUE
+    ) +
+    ggrepel::geom_text_repel(
+      data = finais,
+      aes(label = rotulo),
+      direction = "y",
+      hjust = 0,
+      nudge_x = 0.35,
+      size = 3.4,
+      fontface = "bold",
+      max.overlaps = Inf,
+      min.segment.length = 0,
+      show.legend = FALSE
+    ) +
+    scale_color_manual(values = cores_ufs) +
+    scale_x_continuous(
+      breaks = seq(2005, 2025, 2),
+      limits = c(2005, 2030)
+    ) +
+    scale_y_continuous(
+      limits = c(2, 8),
+      breaks = seq(2, 8, 0.5)
+    ) +
+    labs(
+      title = paste0(
+        "Evolução do IDEB — ",
+        regiao_i,
+        " — ",
+        etapa_i
+      ),
+      subtitle = paste0(
+        "Rede: ",
+        rede_i,
+        " | linha tracejada = meta de referência | rótulo: UF | IDEB final | variação"
+      ),
+      x = NULL,
+      y = "IDEB",
+      color = "UF",
+      caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+    ) +
+    theme(
+      legend.position = "bottom",
+      legend.title = element_text(face = "bold")
+    )
+}
+```
+
+# Comparações por REGIÃO
+
+## 7.1 Série histórica por etapa e rede
+
+```{r regioes-series, results='asis', fig.width=14, fig.height=7}
+for (etapa_i in unique(ideb_regioes$etapa)) {
+  redes_i <- ideb_regioes %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+    p <- grafico_series_regioes(etapa_i, rede_i)
+    if (is.null(p)) next
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+    print(p)
+  }
+}
+```
+
+## 7.2 Comparação entre redes dentro de cada região
+
+```{r regioes-redes, results='asis', fig.width=14, fig.height=8}
+for (etapa_i in unique(ideb_regioes$etapa)) {
+
+  dados <- ideb_regioes %>%
+    filter(etapa == etapa_i, !is.na(ideb))
+
+  if (nrow(dados) == 0) next
+
+  p <- ggplot(
+    dados,
+    aes(x = ano, y = ideb, color = rede, group = rede)
+  ) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 1.8) +
+    facet_wrap(~ regiao, ncol = 2) +
+    scale_color_manual(values = cores_redes) +
+    scale_x_continuous(breaks = seq(2005, 2025, 4)) +
+    scale_y_continuous(limits = c(2, 8), breaks = seq(2, 8, 0.5)) +
+    labs(
+      title = paste0("Comparação entre redes por região — ", etapa_i),
+      subtitle = "Comparação das redes disponíveis na base",
+      x = NULL,
+      y = "IDEB",
+      color = "Rede",
+      caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+    )
+
+  cat("\n\n### ", etapa_i, "\n\n", sep = "")
+  print(p)
+}
+```
+
+## 7.3 Ranking regional em 2025
+
+```{r ranking-regioes, results='asis', fig.width=12, fig.height=7}
+ranking_regioes <- ideb_regioes %>%
+  filter(ano == 2025, !is.na(ideb)) %>%
+  group_by(etapa, rede) %>%
+  mutate(posicao = min_rank(desc(ideb))) %>%
+  ungroup()
+
+for (etapa_i in unique(ranking_regioes$etapa)) {
+  redes_i <- ranking_regioes %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    dados <- ranking_regioes %>%
+      filter(etapa == etapa_i, rede == rede_i) %>%
+      mutate(local = fct_reorder(local, ideb))
+
+    p <- ggplot(
+      dados,
+      aes(x = ideb, y = local, fill = regiao)
+    ) +
+      geom_col() +
+      geom_text(
+        aes(label = sprintf("%.1f", ideb)),
+        hjust = -0.1,
+        size = 3
+      ) +
+      scale_x_continuous(limits = c(0, 8), breaks = seq(0, 8, 0.5)) +
+      scale_fill_manual(values = cores_regioes) +
+      labs(
+        title = paste0("IDEB 2025 por região — ", etapa_i),
+        subtitle = paste0("Rede: ", rede_i),
+        x = "IDEB 2025",
+        y = NULL,
+        fill = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      ) +
+      theme(panel.grid.major.y = element_blank())
+
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+    print(p)
+  }
+}
+```
+
+## 7.4 Variação acumulada por região
+
+```{r variacao-regioes, results='asis', fig.width=12, fig.height=7}
+variacao_regioes <- calcular_variacao(
+  ideb_regioes,
+  c("local", "regiao", "etapa", "rede")
+)
+
+for (etapa_i in unique(variacao_regioes$etapa)) {
+  redes_i <- variacao_regioes %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    dados <- variacao_regioes %>%
+      filter(etapa == etapa_i, rede == rede_i) %>%
+      mutate(local = fct_reorder(local, variacao))
+
+    p <- ggplot(
+      dados,
+      aes(x = variacao, y = local, fill = regiao)
+    ) +
+      geom_col() +
+      geom_text(
+        aes(label = sprintf("%+.1f", variacao)),
+        hjust = -0.1,
+        size = 3
+      ) +
+      scale_fill_manual(values = cores_regioes) +
+      labs(
+        title = paste0("Variação acumulada do IDEB por região — ", etapa_i),
+        subtitle = paste0("Rede: ", rede_i, " | primeiro resultado disponível até 2025"),
+        x = "Variação do IDEB",
+        y = NULL,
+        fill = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      ) +
+      theme(panel.grid.major.y = element_blank())
+
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+    print(p)
+  }
+}
+```
+
+## 7.5 Distância para a meta de referência
+
+```{r metas-regioes, results='asis', fig.width=14, fig.height=8}
+dados_meta_regioes <- ideb_regioes %>%
+  filter(!is.na(ideb), !is.na(meta_referencia)) %>%
+  mutate(diferenca_meta = ideb - meta_referencia)
+
+for (etapa_i in unique(dados_meta_regioes$etapa)) {
+  redes_i <- dados_meta_regioes %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+    dados <- dados_meta_regioes %>%
+      filter(etapa == etapa_i, rede == rede_i)
+
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+
+    print(
+      ggplot(
+        dados,
+        aes(x = ano, y = diferenca_meta, color = regiao, group = regiao)
+      ) +
+        geom_hline(yintercept = 0, linetype = "dashed") +
+        geom_line(linewidth = 1) +
+        geom_point(size = 2) +
+        scale_color_manual(values = cores_regioes) +
+        scale_x_continuous(breaks = seq(2007, 2025, 2)) +
+        labs(
+          title = paste0("Distância entre IDEB e meta de referência — ", etapa_i),
+          subtitle = paste0("Rede: ", rede_i, " | valores positivos indicam resultado acima da referência"),
+          x = NULL,
+          y = "IDEB observado − meta de referência",
+          color = "Região",
+          caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+        )
+    )
+  }
+}
+```
+
+# Comparações por UNIDADE DA FEDERAÇÃO
+
+## 8.1 Série histórica das UFs por etapa e rede
+
+```{r ufs-series, results='asis', fig.width=14, fig.height=7}
+for (etapa_i in unique(ideb_ufs$etapa)) {
+
+  redes_i <- ideb_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    regioes_i <- ideb_ufs %>%
+      filter(
+        etapa == etapa_i,
+        rede == rede_i,
+        !is.na(ideb),
+        !is.na(regiao)
+      ) %>%
+      distinct(regiao) %>%
+      pull(regiao)
+
+    for (regiao_i in regioes) {
+
+      if (!regiao_i %in% regioes_i) next
+
+      p <- grafico_series_ufs_regiao(
+        etapa_i,
+        rede_i,
+        regiao_i
+      )
+
+      if (is.null(p)) next
+
+      cat(
+        "\n\n### ",
+        etapa_i,
+        " — ",
+        rede_i,
+        " — ",
+        regiao_i,
+        "\n\n",
+        sep = ""
+      )
+
+      print(p)
+    }
+  }
+}
+```
+
+## 8.2 Comparação entre redes dentro de cada UF
+
+Cada UF é apresentada em um gráfico separado, facilitando a leitura das diferenças entre as redes ao longo do tempo.
+
+```{r ufs-redes, results='asis', fig.width=13, fig.height=6}
+for (etapa_i in unique(ideb_ufs$etapa)) {
+
+  ufs_i <- ideb_ufs %>%
+    filter(
+      etapa == etapa_i,
+      !is.na(ideb),
+      !is.na(uf)
+    ) %>%
+    distinct(regiao, uf, local) %>%
+    arrange(
+      factor(regiao, levels = regioes),
+      uf
+    )
+
+  for (i in seq_len(nrow(ufs_i))) {
+
+    regiao_i <- ufs_i$regiao[i]
+    uf_i <- ufs_i$uf[i]
+    local_i <- ufs_i$local[i]
+
+    dados <- ideb_ufs %>%
+      filter(
+        etapa == etapa_i,
+        uf == uf_i,
+        !is.na(ideb)
+      )
+
+    if (nrow(dados) == 0) next
+
+    p <- ggplot(
+      dados,
+      aes(
+        x = ano,
+        y = ideb,
+        color = rede,
+        group = rede
+      )
+    ) +
+      geom_line(linewidth = 1.15) +
+      geom_point(size = 2.1) +
+      scale_color_manual(values = cores_redes) +
+      scale_x_continuous(
+        breaks = seq(2005, 2025, 2)
+      ) +
+      scale_y_continuous(
+        limits = c(2, 8),
+        breaks = seq(2, 8, 0.5)
+      ) +
+      labs(
+        title = paste0(
+          "Comparação entre redes — ",
+          local_i,
+          " (",
+          uf_i,
+          ") — ",
+          etapa_i
+        ),
+        subtitle = paste0("Região ", regiao_i),
+        x = NULL,
+        y = "IDEB",
+        color = "Rede",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      )
+
+    cat(
+      "\\n\\n### ",
+      local_i,
+      " (",
+      uf_i,
+      ") — ",
+      etapa_i,
+      "\\n\\n",
+      sep = ""
+    )
+
+    print(p)
+  }
+}
+```
+
+## 8.3 Ranking das UFs em 2025
+
+```{r ranking-ufs, results='asis', fig.width=12, fig.height=10}
+ranking_ufs <- ideb_ufs %>%
+  filter(ano == 2025, !is.na(ideb), !is.na(regiao)) %>%
+  group_by(etapa, rede) %>%
+  mutate(posicao = min_rank(desc(ideb))) %>%
+  ungroup()
+
+for (etapa_i in unique(ranking_ufs$etapa)) {
+  redes_i <- ranking_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    dados <- ranking_ufs %>%
+      filter(etapa == etapa_i, rede == rede_i) %>%
+      mutate(local = fct_reorder(local, ideb))
+
+    p <- ggplot(
+      dados,
+      aes(x = ideb, y = local, fill = regiao)
+    ) +
+      geom_col() +
+      geom_text(
+        aes(label = sprintf("%.1f", ideb)),
+        hjust = -0.1,
+        size = 3
+      ) +
+      scale_x_continuous(limits = c(0, 8), breaks = seq(0, 8, 0.5)) +
+      scale_fill_manual(values = cores_regioes) +
+      labs(
+        title = paste0("Ranking das UFs — ", etapa_i, " — 2025"),
+        subtitle = paste0("Rede: ", rede_i),
+        x = "IDEB 2025",
+        y = NULL,
+        fill = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      ) +
+      theme(panel.grid.major.y = element_blank())
+
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+    print(p)
+  }
+}
+```
+
+## 8.4 Variação acumulada das UFs
+
+```{r variacao-ufs, results='asis', fig.width=12, fig.height=10}
+variacao_ufs <- calcular_variacao(
+  ideb_ufs %>% filter(!is.na(regiao)),
+  c("local", "uf", "regiao", "etapa", "rede")
+)
+
+for (etapa_i in unique(variacao_ufs$etapa)) {
+  redes_i <- variacao_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    dados <- variacao_ufs %>%
+      filter(etapa == etapa_i, rede == rede_i) %>%
+      mutate(local = fct_reorder(local, variacao))
+
+    p <- ggplot(
+      dados,
+      aes(x = variacao, y = local, fill = regiao)
+    ) +
+      geom_col() +
+      geom_text(
+        aes(label = sprintf("%+.1f", variacao)),
+        hjust = -0.1,
+        size = 3
+      ) +
+      scale_fill_manual(values = cores_regioes) +
+      labs(
+        title = paste0("Variação acumulada do IDEB por UF — ", etapa_i),
+        subtitle = paste0("Rede: ", rede_i, " | primeiro resultado disponível até 2025"),
+        x = "Variação do IDEB",
+        y = NULL,
+        fill = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      ) +
+      theme(panel.grid.major.y = element_blank())
+
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+    print(p)
+  }
+}
+```
+
+## 8.5 Distância para a meta de referência — UFs
+
+Para melhorar a legibilidade, cada região é apresentada separadamente. Dentro de cada gráfico, cada UF recebe uma cor própria.
+
+```{r metas-ufs, results='asis', fig.width=14, fig.height=7}
+dados_meta_ufs <- ideb_ufs %>%
+  filter(
+    !is.na(ideb),
+    !is.na(meta_referencia),
+    !is.na(regiao)
+  ) %>%
+  mutate(
+    diferenca_meta = ideb - meta_referencia
+  )
+
+for (etapa_i in unique(dados_meta_ufs$etapa)) {
+
+  redes_i <- dados_meta_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    for (regiao_i in regioes) {
+
+      dados <- dados_meta_ufs %>%
+        filter(
+          etapa == etapa_i,
+          rede == rede_i,
+          regiao == regiao_i
+        )
+
+      if (nrow(dados) == 0) next
+
+      estados <- sort(unique(dados$local))
+
+      cores_ufs <- setNames(
+        pal_ufs(length(estados)),
+        estados
+      )
+
+      p <- ggplot(
+        dados,
+        aes(
+          x = ano,
+          y = diferenca_meta,
+          color = local,
+          group = local
+        )
+      ) +
+        geom_hline(
+          yintercept = 0,
+          linetype = "dashed",
+          linewidth = 0.7
+        ) +
+        geom_line(linewidth = 1.15) +
+        geom_point(size = 2.1) +
+        scale_color_manual(values = cores_ufs) +
+        scale_x_continuous(
+          breaks = seq(2007, 2025, 2)
+        ) +
+        labs(
+          title = paste0(
+            "Distância entre IDEB e meta de referência — ",
+            regiao_i,
+            " — ",
+            etapa_i
+          ),
+          subtitle = paste0(
+            "Rede: ",
+            rede_i,
+            " | acima de zero = resultado acima da referência"
+          ),
+          x = NULL,
+          y = "IDEB observado − meta de referência",
+          color = "UF",
+          caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+        ) +
+        theme(
+          legend.position = "bottom",
+          legend.title = element_text(face = "bold")
+        )
+
+      cat(
+        "\\n\\n### ",
+        etapa_i,
+        " — ",
+        rede_i,
+        " — ",
+        regiao_i,
+        "\\n\\n",
+        sep = ""
+      )
+
+      print(p)
+    }
+  }
+}
+```
+
+
+# Convergência do IDEB entre as UFs
+
+Esta seção avalia se as diferenças entre as Unidades da Federação diminuíram ao longo do tempo. São utilizadas duas abordagens complementares:
+
+- **Beta-convergência:** verifica se UFs que partiam de níveis mais baixos de IDEB apresentaram maior aproximação dos níveis observados ao final do período.
+- **Sigma-convergência:** verifica se a dispersão dos resultados entre as UFs diminuiu ao longo do tempo.
+
+As análises são realizadas separadamente por etapa de ensino e rede, sempre respeitando a disponibilidade dos dados.
+
+```{r convergencia-funcoes, include=FALSE}
+preparar_convergencia <- function(dados, etapa_i, rede_i) {
+
+  base_filtrada <- dados %>%
+    filter(
+      etapa == etapa_i,
+      rede == rede_i,
+      !is.na(ideb),
+      !is.na(uf),
+      !is.na(regiao)
+    ) %>%
+    select(
+      uf,
+      local,
+      regiao,
+      ano,
+      ideb
+    ) %>%
+    distinct()
+
+  # Identifica os anos com cobertura suficiente para regressão.
+  cobertura <- base_filtrada %>%
+    group_by(ano) %>%
+    summarise(
+      n_ufs = n_distinct(uf),
+      .groups = "drop"
+    ) %>%
+    filter(n_ufs >= 5) %>%
+    arrange(ano)
+
+  if (nrow(cobertura) < 2) {
+    return(NULL)
+  }
+
+  ano_inicial <- min(cobertura$ano)
+  ano_final <- max(cobertura$ano)
+
+  base <- base_filtrada %>%
+    filter(
+      ano %in% c(
+        ano_inicial,
+        ano_final
+      )
+    ) %>%
+    mutate(
+      periodo = case_when(
+        ano == ano_inicial ~ "inicial",
+        ano == ano_final ~ "final"
+      )
+    ) %>%
+    select(
+      uf,
+      local,
+      regiao,
+      periodo,
+      ideb
+    ) %>%
+    pivot_wider(
+      names_from = periodo,
+      values_from = ideb,
+      names_prefix = "ideb_"
+    )
+
+  # Garante a existência das duas colunas mesmo quando uma ponta
+  # estiver totalmente ausente para determinada combinação.
+  if (!"ideb_inicial" %in% names(base)) {
+    base$ideb_inicial <- NA_real_
+  }
+
+  if (!"ideb_final" %in% names(base)) {
+    base$ideb_final <- NA_real_
+  }
+
+  base <- base %>%
+    filter(
+      !is.na(ideb_inicial),
+      !is.na(ideb_final)
+    ) %>%
+    mutate(
+      variacao = ideb_final - ideb_inicial
+    )
+
+  if (nrow(base) < 5) {
+    return(NULL)
+  }
+
+  list(
+    dados = base,
+    ano_inicial = ano_inicial,
+    ano_final = ano_final
+  )
+}
+
+ajustar_beta_convergencia <- function(base) {
+
+  if (nrow(base) < 5) {
+    return(NULL)
+  }
+
+  modelo_variacao <- lm(
+    variacao ~ ideb_inicial,
+    data = base
+  )
+
+  modelo_nivel <- lm(
+    ideb_final ~ ideb_inicial,
+    data = base
+  )
+
+  list(
+    modelo_variacao = modelo_variacao,
+    modelo_nivel = modelo_nivel
+  )
+}
+
+resumo_beta <- function(modelo_ajustado, tipo) {
+
+  sm <- summary(modelo_ajustado)
+  coefs <- coef(sm)
+  n_obs <- length(stats::residuals(modelo_ajustado))
+
+  tibble(
+    modelo = tipo,
+    intercepto = unname(coefs[1, 1]),
+    beta = unname(coefs[2, 1]),
+    erro_padrao = unname(coefs[2, 2]),
+    estatistica_t = unname(coefs[2, 3]),
+    p_valor = unname(coefs[2, 4]),
+    r2 = sm$r.squared,
+    r2_ajustado = sm$adj.r.squared,
+    n = n_obs
+  )
+}
+
+classificar_beta <- function(beta, p_valor, tipo) {
+
+  if (is.na(beta) || is.na(p_valor)) {
+    return("Resultado inconclusivo")
+  }
+
+  if (tipo == "variacao") {
+    if (beta < 0 && p_valor < 0.05) {
+      return("Evidência estatística de beta-convergência")
+    } else if (beta < 0) {
+      return("Sinal de convergência, sem significância estatística a 5%")
+    } else {
+      return("Sem evidência de beta-convergência")
+    }
+  }
+
+  if (tipo == "nivel") {
+    if (beta > 0 && beta < 1 && p_valor < 0.05) {
+      return("Padrão compatível com convergência")
+    } else if (beta > 0 && beta < 1) {
+      return("Padrão compatível com convergência, sem significância estatística a 5%")
+    } else {
+      return("Sem padrão claro de convergência")
+    }
+  }
+
+  "Resultado inconclusivo"
+}
+```
+
+## Beta-convergência
+
+A primeira especificação relaciona a variação acumulada do IDEB ao nível inicial do indicador. Para cada combinação de etapa e rede, utiliza-se o primeiro e o último ano com cobertura suficiente de UFs. Um coeficiente negativo sugere que UFs que começaram em níveis mais baixos cresceram mais ao longo do período.
+
+A segunda especificação relaciona diretamente o IDEB final ao IDEB inicial do período disponível. Coeficientes positivos abaixo de 1 são compatíveis com redução relativa das diferenças iniciais.
+
+```{r beta-convergencia-graficos, results='asis', fig.width=12, fig.height=7}
+etapas_conv <- unique(ideb_ufs$etapa)
+
+for (etapa_i in etapas_conv) {
+
+  redes_i <- ideb_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    conv <- preparar_convergencia(
+      ideb_ufs,
+      etapa_i,
+      rede_i
+    )
+
+    if (is.null(conv)) next
+
+    base_conv <- conv$dados
+    ano_inicial <- conv$ano_inicial
+    ano_final <- conv$ano_final
+
+    modelos <- ajustar_beta_convergencia(
+      base_conv
+    )
+
+    if (is.null(modelos)) next
+
+    grafico_beta <- ggplot(
+      base_conv,
+      aes(
+        x = ideb_inicial,
+        y = variacao,
+        color = regiao
+      )
+    ) +
+      geom_point(size = 3) +
+      geom_smooth(
+        method = "lm",
+        se = TRUE,
+        color = "grey20",
+        linewidth = 0.9
+      ) +
+      ggrepel::geom_text_repel(
+        aes(label = uf),
+        size = 3.2,
+        show.legend = FALSE,
+        max.overlaps = Inf
+      ) +
+      scale_color_manual(values = cores_regioes) +
+      labs(
+        title = paste0(
+          "Beta-convergência do IDEB — ",
+          etapa_i
+        ),
+        subtitle = paste0(
+          "Rede: ",
+          rede_i,
+          " | variação ",
+          ano_inicial,
+          "–",
+          ano_final,
+          " em função do IDEB inicial"
+        ),
+        x = paste0(
+          "IDEB em ",
+          ano_inicial
+        ),
+        y = paste0(
+          "Variação do IDEB entre ",
+          ano_inicial,
+          " e ",
+          ano_final
+        ),
+        color = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      )
+
+    cat(
+      "\n\n### ",
+      etapa_i,
+      " — ",
+      rede_i,
+      "\n\n",
+      sep = ""
+    )
+
+    print(grafico_beta)
+
+    res_variacao <- resumo_beta(
+      modelos$modelo_variacao,
+      paste0(
+        "Variação ",
+        ano_inicial,
+        "–",
+        ano_final,
+        " ~ IDEB ",
+        ano_inicial
+      )
+    ) %>%
+      mutate(
+        interpretacao = classificar_beta(
+          beta,
+          p_valor,
+          "variacao"
+        )
+      )
+
+    res_nivel <- resumo_beta(
+      modelos$modelo_nivel,
+      paste0(
+        "IDEB ",
+        ano_final,
+        " ~ IDEB ",
+        ano_inicial
+      )
+    ) %>%
+      mutate(
+        interpretacao = classificar_beta(
+          beta,
+          p_valor,
+          "nivel"
+        )
+      )
+
+    resultados_beta <- bind_rows(
+      res_variacao,
+      res_nivel
+    ) %>%
+      mutate(
+        across(
+          c(
+            intercepto,
+            beta,
+            erro_padrao,
+            estatistica_t,
+            p_valor,
+            r2,
+            r2_ajustado
+          ),
+          ~ round(.x, 4)
+        )
+      )
+
+    print(
+      kable(
+        resultados_beta,
+        caption = paste0(
+          "Resultados das regressões de convergência — ",
+          etapa_i,
+          " — ",
+          rede_i,
+          " — ",
+          ano_inicial,
+          " a ",
+          ano_final
+        )
+      )
+    )
+  }
+}
+```
+
+## Sigma-convergência
+
+A sigma-convergência é avaliada pela evolução da dispersão dos IDEBs das UFs. São apresentados o **desvio-padrão** e o **coeficiente de variação**. Uma trajetória descendente indica redução da desigualdade entre as UFs.
+
+```{r sigma-convergencia, results='asis', fig.width=12, fig.height=6}
+for (etapa_i in unique(ideb_ufs$etapa)) {
+
+  redes_i <- ideb_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    dispersao <- ideb_ufs %>%
+      filter(
+        etapa == etapa_i,
+        rede == rede_i,
+        !is.na(ideb),
+        !is.na(uf)
+      ) %>%
+      group_by(ano) %>%
+      summarise(
+        media = mean(ideb),
+        desvio_padrao = sd(ideb),
+        coef_variacao = sd(ideb) / mean(ideb),
+        n_ufs = n_distinct(uf),
+        .groups = "drop"
+      ) %>%
+      filter(
+        n_ufs >= 5,
+        is.finite(desvio_padrao),
+        is.finite(coef_variacao)
+      )
+
+    if (nrow(dispersao) < 2) next
+
+    grafico_dp <- ggplot(
+      dispersao,
+      aes(
+        x = ano,
+        y = desvio_padrao
+      )
+    ) +
+      geom_line(
+        color = "#2F5D7C",
+        linewidth = 1.2
+      ) +
+      geom_point(
+        color = "#2F5D7C",
+        size = 2.4
+      ) +
+      scale_x_continuous(
+        breaks = sort(unique(dispersao$ano))
+      ) +
+      labs(
+        title = paste0(
+          "Sigma-convergência — desvio-padrão — ",
+          etapa_i
+        ),
+        subtitle = paste0(
+          "Rede: ",
+          rede_i,
+          " | queda da dispersão sugere maior aproximação entre as UFs"
+        ),
+        x = NULL,
+        y = "Desvio-padrão do IDEB",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      )
+
+    grafico_cv <- ggplot(
+      dispersao,
+      aes(
+        x = ano,
+        y = coef_variacao
+      )
+    ) +
+      geom_line(
+        color = "#A65353",
+        linewidth = 1.2
+      ) +
+      geom_point(
+        color = "#A65353",
+        size = 2.4
+      ) +
+      scale_x_continuous(
+        breaks = sort(unique(dispersao$ano))
+      ) +
+      scale_y_continuous(
+        labels = scales::percent_format(
+          accuracy = 0.1
+        )
+      ) +
+      labs(
+        title = paste0(
+          "Sigma-convergência — coeficiente de variação — ",
+          etapa_i
+        ),
+        subtitle = paste0(
+          "Rede: ",
+          rede_i,
+          " | medida relativa de dispersão entre as UFs"
+        ),
+        x = NULL,
+        y = "Coeficiente de variação",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      )
+
+    cat(
+      "\n\n### ",
+      etapa_i,
+      " — ",
+      rede_i,
+      "\n\n",
+      sep = ""
+    )
+
+    print(grafico_dp)
+    print(grafico_cv)
+
+    resumo_sigma <- dispersao %>%
+      filter(
+        ano %in% c(
+          min(ano),
+          max(ano)
+        )
+      ) %>%
+      mutate(
+        desvio_padrao = round(
+          desvio_padrao,
+          4
+        ),
+        coef_variacao = round(
+          coef_variacao,
+          4
+        )
+      )
+
+    print(
+      kable(
+        resumo_sigma,
+        caption = paste0(
+          "Dispersão inicial e final — ",
+          etapa_i,
+          " — ",
+          rede_i
+        )
+      )
+    )
+  }
+}
+```
+
+## Leitura conjunta
+
+A existência de convergência é considerada mais consistente quando os dois resultados apontam na mesma direção:
+
+- coeficiente de beta-convergência indicando aproximação entre as UFs;
+- redução do desvio-padrão e/ou do coeficiente de variação ao longo do tempo.
+
+A interpretação deve permanecer descritiva e associativa. Esses modelos não demonstram, por si só, causalidade de políticas públicas, governos ou características socioeconômicas.
+
+
+# Mapas: antes e depois
+
+Nesta seção, o **antes** corresponde a **2005** e o **depois** a **2025**, com um terceiro painel de **variação acumulada**.
+
+```{r mapas-base, include=FALSE}
+mapa_ufs <- geobr::read_state(year = 2020, simplified = TRUE)
+
+criar_mapa_painel <- function(etapa_i, rede_i) {
+
+  base_mapa <- ideb_ufs %>%
+    filter(
+      etapa == etapa_i,
+      rede == rede_i,
+      ano %in% c(2005, 2025),
+      !is.na(regiao)
+    ) %>%
+    select(uf, ano, ideb)
+
+  if (nrow(base_mapa) == 0) return(NULL)
+
+  dados_2005 <- mapa_ufs %>%
+    left_join(
+      base_mapa %>% filter(ano == 2005),
+      by = c("abbrev_state" = "uf")
+    )
+
+  dados_2025 <- mapa_ufs %>%
+    left_join(
+      base_mapa %>% filter(ano == 2025),
+      by = c("abbrev_state" = "uf")
+    )
+
+  variacao <- base_mapa %>%
+    pivot_wider(names_from = ano, values_from = ideb, names_prefix = "ideb_") %>%
+    mutate(variacao = ideb_2025 - ideb_2005)
+
+  dados_var <- mapa_ufs %>%
+    left_join(
+      variacao,
+      by = c("abbrev_state" = "uf")
+    )
+
+  p1 <- ggplot(dados_2005) +
+    geom_sf(aes(fill = ideb), color = "white", linewidth = 0.2) +
+    escala_fill_ideb +
+    labs(title = "2005", fill = "IDEB") +
+    theme_void()
+
+  p2 <- ggplot(dados_2025) +
+    geom_sf(aes(fill = ideb), color = "white", linewidth = 0.2) +
+    escala_fill_ideb +
+    labs(title = "2025", fill = "IDEB") +
+    theme_void()
+
+  p3 <- ggplot(dados_var) +
+    geom_sf(aes(fill = variacao), color = "white", linewidth = 0.2) +
+    escala_fill_variacao +
+    labs(title = "Variação 2005–2025", fill = "Variação") +
+    theme_void()
+
+  (p1 + p2 + p3) +
+    plot_annotation(
+      title = paste0("Mapas do IDEB por UF — ", etapa_i),
+      subtitle = paste0("Rede: ", rede_i, " | antes, depois e variação acumulada"),
+      caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+    )
+}
+```
+
+## 9.1 Mapas por etapa e rede
+
+```{r mapas-ufs, results='asis', fig.width=16, fig.height=6}
+for (etapa_i in unique(ideb_ufs$etapa)) {
+  redes_i <- ideb_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+    p <- criar_mapa_painel(etapa_i, rede_i)
+    if (is.null(p)) next
+    cat("\n\n### ", etapa_i, " — ", rede_i, "\n\n", sep = "")
+    print(p)
+  }
+}
+```
+
+# Diferenças entre redes selecionadas
+
+## 10.1 Privada − Pública por região
+
+```{r gap-publica-privada-regioes, results='asis', fig.width=14, fig.height=8}
+gap_regioes <- ideb_regioes %>%
+  filter(rede %in% c("Pública", "Privada")) %>%
+  select(local, regiao, etapa, rede, ano, ideb) %>%
+  pivot_wider(names_from = rede, values_from = ideb) %>%
+  filter(!is.na(Pública), !is.na(Privada)) %>%
+  mutate(gap_privada_publica = Privada - Pública)
+
+for (etapa_i in unique(gap_regioes$etapa)) {
+  dados <- gap_regioes %>% filter(etapa == etapa_i)
+
+  if (nrow(dados) == 0) next
+
+  cat("\n\n### ", etapa_i, "\n\n", sep = "")
+
+  print(
+    ggplot(
+      dados,
+      aes(x = ano, y = gap_privada_publica, color = regiao, group = regiao)
+    ) +
+      geom_hline(yintercept = 0, linetype = "dashed") +
+      geom_line(linewidth = 1.1) +
+      geom_point(size = 2) +
+      scale_color_manual(values = cores_regioes) +
+      labs(
+        title = paste0("Diferença entre rede privada e pública — ", etapa_i),
+        subtitle = "Valor positivo = IDEB da rede privada superior ao da rede pública",
+        x = NULL,
+        y = "IDEB privada − IDEB pública",
+        color = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      )
+  )
+}
+```
+
+## 10.2 Privada − Pública por UF em 2025
+
+```{r gap-publica-privada-ufs, results='asis', fig.width=12, fig.height=10}
+gap_ufs <- ideb_ufs %>%
+  filter(rede %in% c("Pública", "Privada")) %>%
+  select(local, uf, regiao, etapa, rede, ano, ideb) %>%
+  pivot_wider(names_from = rede, values_from = ideb) %>%
+  filter(!is.na(Pública), !is.na(Privada)) %>%
+  mutate(gap_privada_publica = Privada - Pública)
+
+for (etapa_i in unique(gap_ufs$etapa)) {
+  dados <- gap_ufs %>%
+    filter(etapa == etapa_i, ano == 2025) %>%
+    mutate(local = fct_reorder(local, gap_privada_publica))
+
+  if (nrow(dados) == 0) next
+
+  cat("\n\n### ", etapa_i, "\n\n", sep = "")
+
+  print(
+    ggplot(
+      dados,
+      aes(x = gap_privada_publica, y = local, fill = regiao)
+    ) +
+      geom_vline(xintercept = 0, linetype = "dashed") +
+      geom_col() +
+      scale_fill_manual(values = cores_regioes) +
+      labs(
+        title = paste0("Diferença entre rede privada e pública por UF — ", etapa_i, " — 2025"),
+        subtitle = "Valor positivo = IDEB da rede privada superior ao da rede pública",
+        x = "IDEB privada − IDEB pública",
+        y = NULL,
+        fill = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      ) +
+      theme(panel.grid.major.y = element_blank())
+  )
+}
+```
+
+## 10.3 Estadual − Total por UF em 2025
+
+```{r gap-estadual-total-ufs, results='asis', fig.width=12, fig.height=10}
+gap_estadual_total <- ideb_ufs %>%
+  filter(rede %in% c("Estadual", "Total")) %>%
+  select(local, uf, regiao, etapa, rede, ano, ideb) %>%
+  pivot_wider(names_from = rede, values_from = ideb) %>%
+  filter(!is.na(Estadual), !is.na(Total)) %>%
+  mutate(gap_estadual_total = Estadual - Total)
+
+for (etapa_i in unique(gap_estadual_total$etapa)) {
+  dados <- gap_estadual_total %>%
+    filter(etapa == etapa_i, ano == 2025) %>%
+    mutate(local = fct_reorder(local, gap_estadual_total))
+
+  if (nrow(dados) == 0) next
+
+  cat("\n\n### ", etapa_i, "\n\n", sep = "")
+
+  print(
+    ggplot(
+      dados,
+      aes(x = gap_estadual_total, y = local, fill = regiao)
+    ) +
+      geom_vline(xintercept = 0, linetype = "dashed") +
+      geom_col() +
+      scale_fill_manual(values = cores_regioes) +
+      labs(
+        title = paste0("Diferença entre rede estadual e total por UF — ", etapa_i, " — 2025"),
+        subtitle = "Valor positivo = IDEB estadual superior ao resultado total",
+        x = "IDEB estadual − IDEB total",
+        y = NULL,
+        fill = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      ) +
+      theme(panel.grid.major.y = element_blank())
+  )
+}
+```
+
+# Tabelas-resumo de 2025
+
+## 11.1 Regiões
+
+```{r tabela-regioes-2025}
+tabela_regioes_2025 <- ideb_regioes %>%
+  filter(ano == 2025, !is.na(ideb)) %>%
+  arrange(etapa, rede, desc(ideb)) %>%
+  group_by(etapa, rede) %>%
+  mutate(posicao = min_rank(desc(ideb))) %>%
+  ungroup() %>%
+  select(etapa, rede, posicao, regiao, ideb)
+
+kable(
+  tabela_regioes_2025,
+  digits = 1,
+  caption = "IDEB 2025 por região, etapa e rede"
+)
+```
+
+## 11.2 UFs
+
+```{r tabela-ufs-2025}
+tabela_ufs_2025 <- ideb_ufs %>%
+  filter(ano == 2025, !is.na(ideb), !is.na(regiao)) %>%
+  arrange(etapa, rede, desc(ideb)) %>%
+  group_by(etapa, rede) %>%
+  mutate(posicao = min_rank(desc(ideb))) %>%
+  ungroup() %>%
+  select(etapa, rede, posicao, uf, local, regiao, ideb)
+
+kable(
+  tabela_ufs_2025,
+  digits = 1,
+  caption = "IDEB 2025 por UF, etapa e rede"
+)
+```
+
+# Síntese automática
+
+```{r sintese}
+lideres_regioes <- tabela_regioes_2025 %>%
+  filter(posicao == 1)
+
+lideres_ufs <- tabela_ufs_2025 %>%
+  filter(posicao == 1)
+
+kable(
+  lideres_regioes,
+  digits = 1,
+  caption = "Líderes regionais por etapa e rede em 2025"
+)
+
+kable(
+  lideres_ufs,
+  digits = 1,
+  caption = "Líderes entre as UFs por etapa e rede em 2025"
+)
+```
+
+# Notas metodológicas finais
+
+1. O relatório utiliza os resultados do arquivo oficial do Inep para **regiões e UFs**.
+2. Os sufixos de notas metodológicas entre parênteses são removidos apenas para criar uma categoria padronizada de rede.
+3. Valores `"-"` são convertidos em `NA`.
+4. A **variação acumulada** corresponde à diferença entre o primeiro e o último IDEB válido disponível.
+5. A linha tracejada representa a **meta de referência do ciclo do Ideb**.
+6. Até **2021**, utiliza-se a meta originalmente disponível na base.
+7. Para **2023 e 2025**, utiliza-se a **meta de 2021 como referência visual do ciclo**, sem tratá-la como nova meta oficial pactuada.
+8. A rede **Municipal** não está presente neste arquivo de regiões e UFs.
+9. Para **ensino médio**, a categoria agregada **Pública** não aparece na base analisada.
+10. Rankings e variações são medidas complementares e não devem ser confundidas.
+11. Os botões de download dos gráficos estão disponíveis somente na saída **HTML** e fazem o download da respectiva figura em **PNG a 300 dpi**.
