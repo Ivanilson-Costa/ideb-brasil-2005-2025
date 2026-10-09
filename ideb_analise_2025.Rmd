@@ -574,7 +574,7 @@ grafico_series_ufs_regiao <- function(etapa_i, rede_i, regiao_i) {
 
 # Comparações por REGIÃO
 
-## 7.1 Série histórica por etapa e rede
+## Série histórica por etapa e rede
 
 ```{r regioes-series, results='asis', fig.width=14, fig.height=7}
 for (etapa_i in unique(ideb_regioes$etapa)) {
@@ -592,7 +592,7 @@ for (etapa_i in unique(ideb_regioes$etapa)) {
 }
 ```
 
-## 7.2 Comparação entre redes dentro de cada região
+## Comparação entre redes dentro de cada região
 
 ```{r regioes-redes, results='asis', fig.width=14, fig.height=8}
 for (etapa_i in unique(ideb_regioes$etapa)) {
@@ -626,7 +626,7 @@ for (etapa_i in unique(ideb_regioes$etapa)) {
 }
 ```
 
-## 7.3 Ranking regional em 2025
+## Ranking regional em 2025
 
 ```{r ranking-regioes, results='asis', fig.width=12, fig.height=7}
 ranking_regioes <- ideb_regioes %>%
@@ -675,7 +675,7 @@ for (etapa_i in unique(ranking_regioes$etapa)) {
 }
 ```
 
-## 7.4 Variação acumulada por região
+## Variação acumulada por região
 
 ```{r variacao-regioes, results='asis', fig.width=12, fig.height=7}
 variacao_regioes <- calcular_variacao(
@@ -722,7 +722,7 @@ for (etapa_i in unique(variacao_regioes$etapa)) {
 }
 ```
 
-## 7.5 Distância para a meta de referência
+## Distância para a meta de referência
 
 ```{r metas-regioes, results='asis', fig.width=14, fig.height=8}
 dados_meta_regioes <- ideb_regioes %>%
@@ -766,7 +766,7 @@ for (etapa_i in unique(dados_meta_regioes$etapa)) {
 
 # Comparações por UNIDADE DA FEDERAÇÃO
 
-## 8.1 Série histórica das UFs por etapa e rede
+## Série histórica das UFs por etapa e rede
 
 ```{r ufs-series, results='asis', fig.width=14, fig.height=7}
 for (etapa_i in unique(ideb_ufs$etapa)) {
@@ -817,7 +817,7 @@ for (etapa_i in unique(ideb_ufs$etapa)) {
 }
 ```
 
-## 8.2 Comparação entre redes dentro de cada UF
+## Comparação entre redes dentro de cada UF
 
 Cada UF é apresentada em um gráfico separado, facilitando a leitura das diferenças entre as redes ao longo do tempo.
 
@@ -898,7 +898,7 @@ for (etapa_i in unique(ideb_ufs$etapa)) {
 }
 ```
 
-## 8.3 Ranking das UFs em 2025
+## Ranking das UFs em 2025
 
 ```{r ranking-ufs, results='asis', fig.width=12, fig.height=10}
 ranking_ufs <- ideb_ufs %>%
@@ -947,7 +947,7 @@ for (etapa_i in unique(ranking_ufs$etapa)) {
 }
 ```
 
-## 8.4 Variação acumulada das UFs
+## Variação acumulada das UFs
 
 ```{r variacao-ufs, results='asis', fig.width=12, fig.height=10}
 variacao_ufs <- calcular_variacao(
@@ -994,7 +994,7 @@ for (etapa_i in unique(variacao_ufs$etapa)) {
 }
 ```
 
-## 8.5 Distância para a meta de referência — UFs
+## Distância para a meta de referência — UFs
 
 Para melhorar a legibilidade, cada região é apresentada separadamente. Dentro de cada gráfico, cada UF recebe uma cor própria.
 
@@ -1096,12 +1096,14 @@ cat(
 
 # Convergência do IDEB entre as UFs
 
-Esta seção avalia se as diferenças entre as Unidades da Federação diminuíram ao longo do tempo. São utilizadas duas abordagens complementares:
+Esta seção avalia se as diferenças entre as Unidades da Federação diminuíram ao longo do tempo e investiga se parte da relação entre nível inicial e crescimento pode estar associada a retornos decrescentes ou a menor espaço disponível para avanço. São utilizadas quatro leituras complementares:
 
-- **Beta-convergência:** verifica se UFs que partiam de níveis mais baixos de IDEB apresentaram maior aproximação dos níveis observados ao final do período.
+- **Beta-convergência:** verifica se UFs que partiam de níveis mais baixos de IDEB apresentaram maior crescimento ao longo do período.
+- **Relação não linear:** compara a especificação linear com uma especificação quadrática, verificando se uma reta é suficiente para representar a relação entre IDEB inicial e crescimento. Evidência de curvatura pode ser compatível com retornos decrescentes ou efeito de platô, mas não prova, isoladamente, a existência de um teto.
+- **Fechamento do espaço disponível:** mede qual parcela da distância entre o IDEB inicial e um benchmark foi conquistada até o final do período.
 - **Sigma-convergência:** verifica se a dispersão dos resultados entre as UFs diminuiu ao longo do tempo.
 
-As análises são realizadas separadamente por etapa de ensino e rede, sempre respeitando a disponibilidade dos dados.
+As análises são realizadas separadamente por etapa de ensino e rede, sempre respeitando a disponibilidade dos dados. Os resultados são descritivos e associativos e não identificam, por si só, efeitos causais de políticas públicas.
 
 ```{r convergencia-funcoes, include=FALSE}
 preparar_convergencia <- function(dados, etapa_i, rede_i) {
@@ -1264,6 +1266,159 @@ classificar_beta <- function(beta, p_valor, tipo) {
   }
 
   "Resultado inconclusivo"
+}
+
+ajustar_nao_linear <- function(base) {
+
+  if (nrow(base) < 8) {
+    return(NULL)
+  }
+
+  base_modelo <- base %>%
+    mutate(
+      ideb_c = ideb_inicial - mean(ideb_inicial, na.rm = TRUE)
+    )
+
+  modelo_linear <- lm(
+    variacao ~ ideb_c,
+    data = base_modelo
+  )
+
+  modelo_quadratico <- lm(
+    variacao ~ ideb_c + I(ideb_c^2),
+    data = base_modelo
+  )
+
+  comparacao <- anova(
+    modelo_linear,
+    modelo_quadratico
+  )
+
+  sm_linear <- summary(modelo_linear)
+  sm_quad <- summary(modelo_quadratico)
+  coefs_quad <- coef(sm_quad)
+
+  p_quadratico <- if ("I(ideb_c^2)" %in% rownames(coefs_quad)) {
+    unname(coefs_quad["I(ideb_c^2)", 4])
+  } else {
+    NA_real_
+  }
+
+  beta_quadratico <- if ("I(ideb_c^2)" %in% rownames(coefs_quad)) {
+    unname(coefs_quad["I(ideb_c^2)", 1])
+  } else {
+    NA_real_
+  }
+
+  p_comparacao <- if (nrow(comparacao) >= 2) {
+    comparacao$`Pr(>F)`[2]
+  } else {
+    NA_real_
+  }
+
+  aic_linear <- AIC(modelo_linear)
+  aic_quadratico <- AIC(modelo_quadratico)
+  delta_aic <- aic_quadratico - aic_linear
+
+  interpretacao <- case_when(
+    !is.na(p_quadratico) &&
+      p_quadratico < 0.05 &&
+      delta_aic <= -2 ~
+      "Evidência de relação não linear; o modelo quadrático melhora o ajuste",
+    !is.na(p_quadratico) &&
+      p_quadratico < 0.05 ~
+      "Termo quadrático significativo, mas com ganho limitado de ajuste",
+    delta_aic <= -2 ~
+      "AIC favorece o modelo quadrático, sem significância da curvatura a 5%",
+    TRUE ~
+      "Sem evidência clara de que a relação quadrática supere a linear"
+  )
+
+  resumo <- tibble(
+    modelo = c("Linear", "Quadrático"),
+    r2 = c(
+      sm_linear$r.squared,
+      sm_quad$r.squared
+    ),
+    r2_ajustado = c(
+      sm_linear$adj.r.squared,
+      sm_quad$adj.r.squared
+    ),
+    aic = c(
+      aic_linear,
+      aic_quadratico
+    ),
+    beta_quadratico = c(
+      NA_real_,
+      beta_quadratico
+    ),
+    p_quadratico = c(
+      NA_real_,
+      p_quadratico
+    ),
+    p_comparacao = c(
+      NA_real_,
+      p_comparacao
+    ),
+    interpretacao = c(
+      "Modelo de referência",
+      interpretacao
+    )
+  )
+
+  list(
+    dados = base_modelo,
+    modelo_linear = modelo_linear,
+    modelo_quadratico = modelo_quadratico,
+    resumo = resumo
+  )
+}
+
+calcular_espaco_disponivel <- function(
+  base,
+  dados_completos,
+  etapa_i,
+  rede_i
+) {
+
+  benchmark_teorico <- 10
+
+  benchmark_empirico <- dados_completos %>%
+    filter(
+      etapa == etapa_i,
+      rede == rede_i,
+      !is.na(ideb),
+      !is.na(uf)
+    ) %>%
+    summarise(
+      benchmark = max(ideb, na.rm = TRUE)
+    ) %>%
+    pull(benchmark)
+
+  if (
+    length(benchmark_empirico) == 0 ||
+    !is.finite(benchmark_empirico)
+  ) {
+    return(NULL)
+  }
+
+  base %>%
+    mutate(
+      benchmark_teorico = benchmark_teorico,
+      benchmark_empirico = benchmark_empirico,
+      espaco_ate_10 = benchmark_teorico - ideb_inicial,
+      espaco_ate_empirico = benchmark_empirico - ideb_inicial,
+      fechamento_10 = if_else(
+        espaco_ate_10 > 0,
+        variacao / espaco_ate_10,
+        NA_real_
+      ),
+      fechamento_empirico = if_else(
+        espaco_ate_empirico > 1e-10,
+        variacao / espaco_ate_empirico,
+        NA_real_
+      )
+    )
 }
 ```
 
@@ -1438,6 +1593,378 @@ for (etapa_i in etapas_conv) {
 }
 ```
 
+## Relação não linear e possível efeito de platô
+
+A beta-convergência linear mostra se UFs que partiram de níveis mais baixos tenderam a crescer mais, mas uma reta pode não representar adequadamente toda a relação. Para investigar possível **curvatura**, compara-se o modelo linear com um modelo quadrático:
+
+\[
+\Delta IDEB_i =
+\beta_0 +
+\beta_1 IDEB_{inicial,i} +
+\beta_2 IDEB_{inicial,i}^{2} +
+\varepsilon_i.
+\]
+
+Para reduzir problemas numéricos entre o termo linear e o quadrático, o IDEB inicial é centralizado antes da estimação. A comparação utiliza o termo quadrático, o teste entre modelos aninhados, o \(R^2\) ajustado e o AIC. Um AIC pelo menos 2 pontos menor é tratado como evidência prática de melhora de ajuste.
+
+A existência de curvatura **não demonstra, isoladamente, um efeito teto**. Ela indica apenas que a relação entre o nível inicial e o crescimento pode não ser adequadamente descrita por uma reta. A interpretação deve considerar conjuntamente o formato da curva e a análise do espaço disponível para crescimento.
+
+```{r convergencia-nao-linear, results='asis', fig.width=12, fig.height=7}
+for (etapa_i in unique(ideb_ufs$etapa)) {
+
+  redes_i <- ideb_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    conv <- preparar_convergencia(
+      ideb_ufs,
+      etapa_i,
+      rede_i
+    )
+
+    if (is.null(conv)) next
+
+    base_conv <- conv$dados
+    ano_inicial <- conv$ano_inicial
+    ano_final <- conv$ano_final
+
+    ajuste_nl <- ajustar_nao_linear(
+      base_conv
+    )
+
+    if (is.null(ajuste_nl)) next
+
+    grafico_nl <- ggplot(
+      base_conv,
+      aes(
+        x = ideb_inicial,
+        y = variacao,
+        color = regiao
+      )
+    ) +
+      geom_point(size = 3) +
+      geom_smooth(
+        aes(group = 1),
+        method = "lm",
+        formula = y ~ x,
+        se = FALSE,
+        color = "grey25",
+        linewidth = 1
+      ) +
+      geom_smooth(
+        aes(group = 1),
+        method = "lm",
+        formula = y ~ x + I(x^2),
+        se = FALSE,
+        color = "#2F5D7C",
+        linewidth = 1.1,
+        linetype = "dashed"
+      ) +
+      ggrepel::geom_text_repel(
+        aes(label = uf),
+        size = 3.1,
+        show.legend = FALSE,
+        max.overlaps = Inf
+      ) +
+      scale_color_manual(
+        values = cores_regioes
+      ) +
+      labs(
+        title = paste0(
+          "Relação linear e não linear — ",
+          etapa_i
+        ),
+        subtitle = paste0(
+          "Rede: ",
+          rede_i,
+          " | linha contínua = linear; tracejada = quadrática"
+        ),
+        x = paste0(
+          "IDEB em ",
+          ano_inicial
+        ),
+        y = paste0(
+          "Variação do IDEB entre ",
+          ano_inicial,
+          " e ",
+          ano_final
+        ),
+        color = "Região",
+        caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+      )
+
+    cat(
+      "\n\n### ",
+      etapa_i,
+      " — ",
+      rede_i,
+      "\n\n",
+      sep = ""
+    )
+
+    print(grafico_nl)
+
+    resumo_nl <- ajuste_nl$resumo %>%
+      mutate(
+        across(
+          c(
+            r2,
+            r2_ajustado,
+            aic,
+            beta_quadratico,
+            p_quadratico,
+            p_comparacao
+          ),
+          ~ round(.x, 4)
+        )
+      )
+
+    print(
+      kable(
+        resumo_nl,
+        caption = paste0(
+          "Comparação entre modelos linear e quadrático — ",
+          etapa_i,
+          " — ",
+          rede_i,
+          " — ",
+          ano_inicial,
+          " a ",
+          ano_final
+        )
+      )
+    )
+  }
+}
+```
+
+## Fechamento do espaço disponível para crescimento
+
+A variação absoluta do IDEB pode favorecer visualmente UFs que partiram de níveis mais baixos, pois elas dispõem de maior distância até níveis elevados do indicador. Para complementar a análise, calcula-se a parcela do **espaço disponível** que foi fechada no período.
+
+São utilizados dois benchmarks:
+
+1. **Limite teórico 10:** corresponde ao limite superior da escala do IDEB. É uma referência matemática, não uma meta substantiva de desempenho.
+2. **Benchmark empírico:** corresponde ao maior IDEB efetivamente observado entre as UFs, em qualquer ano disponível, dentro da mesma etapa e rede. É utilizado apenas como análise de sensibilidade e não representa uma meta oficial.
+
+Para o limite teórico, a medida é:
+
+\[
+Fechamento_{10,i} =
+\frac{IDEB_{final,i}-IDEB_{inicial,i}}
+{10-IDEB_{inicial,i}}.
+\]
+
+A mesma lógica é aplicada ao benchmark empírico. Valores próximos de 1 indicam que grande parcela da distância disponível foi fechada; valores próximos de 0 indicam pouco avanço relativamente ao espaço existente; valores negativos indicam deterioração do IDEB no período.
+
+```{r espaco-disponivel, results='asis', fig.width=13, fig.height=11}
+for (etapa_i in unique(ideb_ufs$etapa)) {
+
+  redes_i <- ideb_ufs %>%
+    filter(etapa == etapa_i) %>%
+    distinct(rede) %>%
+    pull(rede)
+
+  for (rede_i in redes_i) {
+
+    conv <- preparar_convergencia(
+      ideb_ufs,
+      etapa_i,
+      rede_i
+    )
+
+    if (is.null(conv)) next
+
+    base_conv <- conv$dados
+    ano_inicial <- conv$ano_inicial
+    ano_final <- conv$ano_final
+
+    espaco <- calcular_espaco_disponivel(
+      base = base_conv,
+      dados_completos = ideb_ufs,
+      etapa_i = etapa_i,
+      rede_i = rede_i
+    )
+
+    if (is.null(espaco)) next
+
+    benchmark_empirico <- unique(
+      espaco$benchmark_empirico
+    )[1]
+
+    ordem_ufs <- espaco %>%
+      arrange(fechamento_10) %>%
+      pull(uf)
+
+    espaco <- espaco %>%
+      mutate(
+        uf_ord = factor(
+          uf,
+          levels = ordem_ufs
+        )
+      )
+
+    grafico_10 <- ggplot(
+      espaco,
+      aes(
+        x = fechamento_10,
+        y = uf_ord,
+        fill = regiao
+      )
+    ) +
+      geom_vline(
+        xintercept = 0,
+        linetype = "dashed",
+        color = "grey45"
+      ) +
+      geom_col() +
+      scale_fill_manual(
+        values = cores_regioes
+      ) +
+      scale_x_continuous(
+        labels = scales::percent_format(
+          accuracy = 1
+        )
+      ) +
+      labs(
+        title = "Parcela do espaço até o limite teórico 10 que foi fechada",
+        subtitle = paste0(
+          etapa_i,
+          " — ",
+          rede_i,
+          " | ",
+          ano_inicial,
+          "–",
+          ano_final
+        ),
+        x = "Parcela do espaço disponível conquistada",
+        y = NULL,
+        fill = "Região",
+        caption = "O limite 10 é uma referência matemática da escala, não uma meta oficial."
+      ) +
+      theme(
+        panel.grid.major.y = element_blank()
+      )
+
+    grafico_emp <- ggplot(
+      espaco,
+      aes(
+        x = fechamento_empirico,
+        y = uf_ord,
+        fill = regiao
+      )
+    ) +
+      geom_vline(
+        xintercept = 0,
+        linetype = "dashed",
+        color = "grey45"
+      ) +
+      geom_col() +
+      scale_fill_manual(
+        values = cores_regioes
+      ) +
+      scale_x_continuous(
+        labels = scales::percent_format(
+          accuracy = 1
+        )
+      ) +
+      labs(
+        title = "Parcela do espaço até o benchmark empírico que foi fechada",
+        subtitle = paste0(
+          "Maior IDEB observado na etapa/rede = ",
+          format(
+            round(benchmark_empirico, 1),
+            decimal.mark = ",",
+            nsmall = 1
+          )
+        ),
+        x = "Parcela do espaço disponível conquistada",
+        y = NULL,
+        fill = "Região",
+        caption = "Benchmark empírico = maior IDEB observado entre as UFs em qualquer ano da mesma etapa/rede."
+      ) +
+      theme(
+        panel.grid.major.y = element_blank()
+      )
+
+    cat(
+      "\n\n### ",
+      etapa_i,
+      " — ",
+      rede_i,
+      "\n\n",
+      sep = ""
+    )
+
+    print(
+      grafico_10 /
+        grafico_emp +
+        plot_annotation(
+          title = paste0(
+            "Fechamento do espaço disponível — ",
+            etapa_i,
+            " — ",
+            rede_i
+          ),
+          caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
+        )
+    )
+
+    resumo_espaco <- espaco %>%
+      summarise(
+        benchmark_empirico = first(benchmark_empirico),
+        media_fechamento_10 = mean(
+          fechamento_10,
+          na.rm = TRUE
+        ),
+        mediana_fechamento_10 = median(
+          fechamento_10,
+          na.rm = TRUE
+        ),
+        media_fechamento_empirico = mean(
+          fechamento_empirico,
+          na.rm = TRUE
+        ),
+        mediana_fechamento_empirico = median(
+          fechamento_empirico,
+          na.rm = TRUE
+        ),
+        n_ufs = n()
+      ) %>%
+      mutate(
+        benchmark_empirico = round(
+          benchmark_empirico,
+          2
+        ),
+        across(
+          starts_with("media_") |
+            starts_with("mediana_"),
+          ~ round(.x, 4)
+        )
+      )
+
+    print(
+      kable(
+        resumo_espaco,
+        caption = paste0(
+          "Resumo do fechamento do espaço disponível — ",
+          etapa_i,
+          " — ",
+          rede_i,
+          " — ",
+          ano_inicial,
+          " a ",
+          ano_final
+        )
+      )
+    )
+  }
+}
+```
+
 ## Sigma-convergência
 
 A sigma-convergência é avaliada pela evolução da dispersão dos IDEBs das UFs. São apresentados o **desvio-padrão** e o **coeficiente de variação**. Uma trajetória descendente indica redução da desigualdade entre as UFs.
@@ -1593,12 +2120,14 @@ for (etapa_i in unique(ideb_ufs$etapa)) {
 
 ## Leitura conjunta
 
-A existência de convergência é considerada mais consistente quando os dois resultados apontam na mesma direção:
+A existência de convergência é considerada mais consistente quando a beta-convergência e a sigma-convergência apontam na mesma direção:
 
-- coeficiente de beta-convergência indicando aproximação entre as UFs;
+- coeficiente de beta-convergência indicando que UFs com menor nível inicial cresceram mais;
 - redução do desvio-padrão e/ou do coeficiente de variação ao longo do tempo.
 
-A interpretação deve permanecer descritiva e associativa. Esses modelos não demonstram, por si só, causalidade de políticas públicas, governos ou características socioeconômicas.
+As análises de **não linearidade** e de **fechamento do espaço disponível** ajudam a qualificar essa leitura. Se a relação entre nível inicial e crescimento apresentar curvatura relevante, parte do padrão pode estar associada a retornos decrescentes em níveis mais elevados do IDEB. Se UFs de baixo IDEB também fecharem parcela elevada do espaço disponível, o crescimento observado não se resume apenas ao fato de terem começado em níveis inferiores.
+
+Esses resultados devem permanecer descritivos e associativos. Eles não permitem atribuir causalmente os avanços a políticas públicas, governos ou características socioeconômicas sem um desenho específico de identificação causal.
 
 
 # Mapas: antes e depois
@@ -1670,7 +2199,7 @@ criar_mapa_painel <- function(etapa_i, rede_i) {
 }
 ```
 
-## 9.1 Mapas por etapa e rede
+## Mapas por etapa e rede
 
 ```{r mapas-ufs, results='asis', fig.width=16, fig.height=6}
 for (etapa_i in unique(ideb_ufs$etapa)) {
@@ -1690,7 +2219,7 @@ for (etapa_i in unique(ideb_ufs$etapa)) {
 
 # Diferenças entre redes selecionadas
 
-## 10.1 Privada − Pública por região
+## Privada − Pública por região
 
 ```{r gap-publica-privada-regioes, results='asis', fig.width=14, fig.height=8}
 gap_regioes <- ideb_regioes %>%
@@ -1728,7 +2257,7 @@ for (etapa_i in unique(gap_regioes$etapa)) {
 }
 ```
 
-## 10.2 Privada − Pública por UF em 2025
+## Privada − Pública por UF em 2025
 
 ```{r gap-publica-privada-ufs, results='asis', fig.width=12, fig.height=10}
 gap_ufs <- ideb_ufs %>%
@@ -1768,7 +2297,7 @@ for (etapa_i in unique(gap_ufs$etapa)) {
 }
 ```
 
-## 10.3 Estadual − Total por UF em 2025
+## Estadual − Total por UF em 2025
 
 ```{r gap-estadual-total-ufs, results='asis', fig.width=12, fig.height=10}
 gap_estadual_total <- ideb_ufs %>%
@@ -1810,7 +2339,7 @@ for (etapa_i in unique(gap_estadual_total$etapa)) {
 
 # Tabelas-resumo de 2025
 
-## 11.1 Regiões
+## Regiões
 
 ```{r tabela-regioes-2025}
 tabela_regioes_2025 <- ideb_regioes %>%
@@ -1828,7 +2357,7 @@ kable(
 )
 ```
 
-## 11.2 UFs
+## UFs
 
 ```{r tabela-ufs-2025}
 tabela_ufs_2025 <- ideb_ufs %>%
@@ -1880,4 +2409,7 @@ kable(
 8. A rede **Municipal** não está presente neste arquivo de regiões e UFs.
 9. Para **ensino médio**, a categoria agregada **Pública** não aparece na base analisada.
 10. Rankings e variações são medidas complementares e não devem ser confundidas.
-11. Os botões de download dos gráficos estão disponíveis somente na saída **HTML** e fazem o download da respectiva figura em **PNG a 300 dpi**.
+11. Na análise não linear, o termo quadrático é utilizado como diagnóstico de curvatura; sua significância não deve ser interpretada isoladamente como prova de efeito teto.
+12. O indicador de fechamento do espaço até 10 usa o limite matemático da escala do IDEB, não uma meta oficial.
+13. O benchmark empírico corresponde ao maior IDEB observado entre as UFs, em qualquer ano disponível, dentro da mesma etapa e rede, e é utilizado apenas como análise de sensibilidade.
+14. Os botões de download dos gráficos estão disponíveis somente na saída **HTML** e fazem o download da respectiva figura em **PNG a 300 dpi**.
