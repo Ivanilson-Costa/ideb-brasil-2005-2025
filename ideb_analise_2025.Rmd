@@ -123,12 +123,9 @@ knitr::knit_hooks$set(
 }
 </style>
 
-> **Download dos gráficos:** na versão HTML, cada gráfico possui um botão **“Baixar gráfico em PNG”** logo abaixo da figura. Os arquivos são gerados em alta resolução (300 dpi) na pasta `graficos_ideb`. Para manter os botões funcionando, preserve essa pasta junto ao arquivo HTML.
-
-
 # Objetivo
 
-**Autor e elaboração dos gráficos: Ivanilson Costa.** O relatório apresenta apenas os resultados e elementos necessários à interpretação; o código de processamento permanece oculto.
+**Autor e elaboração dos gráficos: Ivanilson Costa.** O relatório apresenta apenas os resultados e elementos necessários à interpretação.
 
 Este relatório apresenta a evolução do **IDEB** entre **2005 e 2025**, comparando:
 
