@@ -889,16 +889,12 @@ for (etapa_i in unique(ideb_ufs$etapa)) {
         caption = "Fonte: Inep/MEC — IDEB 2025 | Elaboração: Ivanilson Costa"
       )
 
-    cat(
-      "\\n\\n### ",
-      local_i,
-      " (",
-      uf_i,
-      ") — ",
-      etapa_i,
-      "\\n\\n",
-      sep = ""
-    )
+  cat(
+  "\n\n### ",
+  local_i, " (", uf_i, ") — ", etapa_i,
+  "\n\n",
+  sep = ""
+)
 
     print(p)
   }
@@ -1084,18 +1080,16 @@ for (etapa_i in unique(dados_meta_ufs$etapa)) {
           legend.position = "bottom",
           legend.title = element_text(face = "bold")
         )
-
-      cat(
-        "\\n\\n### ",
-        etapa_i,
-        " — ",
-        rede_i,
-        " — ",
-        regiao_i,
-        "\\n\\n",
-        sep = ""
-      )
-
+cat(
+  "\n\n### ",
+  etapa_i,
+  " — ",
+  rede_i,
+  " — ",
+  regiao_i,
+  "\n\n",
+  sep = ""
+)
       print(p)
     }
   }
